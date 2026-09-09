@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Panorama Viewer</title>
+<style>
+  :root { --fg:#fff; --muted:rgba(255,255,255,0.7); }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; height:100%; background:#0b0b0f; color:#fff; overflow:hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Helvetica, system-ui, sans-serif;
+  }
+  #stage { position: fixed; inset: 0; }
+
+  /* Top bar */
+  .topbar {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: 16px 20px;
+    display: flex; justify-content: space-between; align-items: center;
+    color: #fff; z-index: 10;
+    background: linear-gradient(180deg, rgba(0,0,0,0.35), transparent);
+    pointer-events: none;
+  }
+  .topbar > * { pointer-events: auto; }
+  .title {
+    font-size: 13px; font-weight: 500; letter-spacing: 0.02em;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 12px; background: rgba(0,0,0,0.35); border-radius: 999px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  .title::before {
+    content: ''; width: 6px; height: 6px; border-radius: 999px;
+    background: oklch(0.7 0.15 155);
+  }
+
+  /* Bottom controls */
+  .controls {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 4px;
+    padding: 4px; background: rgba(0,0,0,0.4);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 999px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    z-index: 10;
+  }
+  .ctrl-btn {
+    width: 40px; height: 40px; border-radius: 999px;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: #fff; background: transparent; border: none; cursor: pointer;
+    transition: background 120ms;
+  }
+  .ctrl-btn:hover { background: rgba(255,255,255,0.12); }
+  .ctrl-btn.active { background: rgba(255,255,255,0.2); }
+  .ctrl-btn svg { width: 18px; height: 18px; }
+  .divider { width: 1px; background: rgba(255,255,255,0.15); margin: 6px 2px; }
+
+  /* Loader */
+  .loader { position: fixed; inset: 0; display:flex; align-items:center; justify-content:center; z-index: 20; background:#0b0b0f; transition: opacity 400ms; }
+  .loader.hidden { opacity: 0; pointer-events:none; }
+  .spinner { width: 34px; height: 34px; border-radius: 50%;
+    border: 2.5px solid rgba(255,255,255,0.15);
+    border-top-color: #fff; animation: spin 900ms linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Error state */
+  .error {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    background: #0b0b0f; z-index: 15; padding: 24px;
+  }
+  .error h2 { margin: 0 0 6px; font-weight: 600; font-size: 18px; }
+  .error p { margin: 0; color: var(--muted); font-size: 14px; max-width: 380px; line-height: 1.6; }
+  .error a { color: #9ec5ff; margin-top: 20px; font-size: 13px; text-decoration: none; padding: 8px 16px; border: 1px solid rgba(255,255,255,0.2); border-radius: 999px; }
+  .error a:hover { background: rgba(255,255,255,0.08); }
+
+  /* Hint */
+  .hint {
+    position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    color: rgba(255,255,255,0.75); font-size: 12px; letter-spacing: 0.05em;
+    padding: 8px 16px; background: rgba(0,0,0,0.35); border-radius: 999px;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    pointer-events: none; opacity: 0; transition: opacity 400ms;
+    z-index: 8;
+  }
+  .hint.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<div class="topbar" id="topbar" hidden>
+  <div class="title" id="title">Panorama</div>
+  <div></div>
+</div>
+
+<div class="controls" id="controls" hidden>
+  <button class="ctrl-btn" id="zoom-in" title="확대">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="8" y1="11" x2="14" y2="11"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+  </button>
+  <button class="ctrl-btn" id="zoom-out" title="축소">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="8" y1="11" x2="14" y2="11"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+  </button>
+  <div class="divider"></div>
+  <button class="ctrl-btn" id="auto-rotate" title="자동 회전">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+  </button>
+  <button class="ctrl-btn" id="gyro" title="자이로스코프">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><ellipse cx="12" cy="12" rx="10" ry="4"/><ellipse cx="12" cy="12" rx="4" ry="10"/></svg>
+  </button>
+  <button class="ctrl-btn" id="reset" title="시점 초기화">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+  </button>
+  <button class="ctrl-btn" id="fullscreen" title="전체화면">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V3h4M21 7V3h-4M3 17v4h4M21 17v4h-4"/></svg>
+  </button>
+</div>
+
+<div class="loader" id="loader"><div class="spinner"></div></div>
+
+<div class="error" id="error" hidden>
+  <h2 id="err-title">파노라마를 찾을 수 없습니다</h2>
+  <p id="err-msg">링크가 잘못되었거나, 이미지가 다른 브라우저에서 업로드되었을 수 있습니다.</p>
+  <a href="Admin.html">관리자 페이지로</a>
+</div>
+
+<div class="hint" id="hint">드래그해서 둘러보기</div>
+
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="panorama-store.js"></script>
+<script src="viewer-engine.js"></script>
+<script>
+(async function () {
+  const $ = (id) => document.getElementById(id);
+  const params = new URLSearchParams(location.search);
+  const id = params.get('id');
+  const stage = $('stage');
+  const loader = $('loader');
+  const errorEl = $('error');
+  const controls = $('controls');
+  const topbar = $('topbar');
+  const title = $('title');
+  const hint = $('hint');
+
+  function showError(msg) {
+    loader.classList.add('hidden');
+    if (msg) $('err-msg').textContent = msg;
+    errorEl.hidden = false;
+  }
+
+  let record = null;
+  let imageUrl = null;
+
+  if (id) {
+    try {
+      record = await PanoramaStore.getPanorama(id);
+    } catch (e) { console.error(e); }
+    if (!record) { showError(); return; }
+    imageUrl = URL.createObjectURL(record.blob);
+    title.textContent = record.name || 'Panorama';
+  } else {
+    // Fallback: try any saved panorama, else use bundled sample
+    try {
+      const all = await PanoramaStore.listPanoramas();
+      if (all[0]) {
+        record = all[0];
+        imageUrl = URL.createObjectURL(record.blob);
+        title.textContent = record.name || 'Panorama';
+      }
+    } catch {}
+    if (!imageUrl) {
+      imageUrl = 'assets/panorama_web.jpg';
+      title.textContent = 'Sample';
+    }
+  }
+
+  const engine = PanoramaEngine.mount(stage, imageUrl, {
+    onLoad() {
+      loader.classList.add('hidden');
+      topbar.hidden = false;
+      controls.hidden = false;
+      hint.classList.add('show');
+      setTimeout(() => hint.classList.remove('show'), 2600);
+    },
+    onError() { showError('이미지를 불러오지 못했습니다.'); },
+  });
+
+  // Controls
+  $('zoom-in').addEventListener('click', () => engine.setFov(engine.state.fov - 8));
+  $('zoom-out').addEventListener('click', () => engine.setFov(engine.state.fov + 8));
+  const autoBtn = $('auto-rotate');
+  autoBtn.addEventListener('click', () => {
+    engine.setAutoRotate(!engine.state.autoRotate);
+    autoBtn.classList.toggle('active', engine.state.autoRotate);
+  });
+  const gyroBtn = $('gyro');
+  gyroBtn.addEventListener('click', async () => {
+    if (engine.state.gyro) {
+      engine.disableGyro();
+      gyroBtn.classList.remove('active');
+    } else {
+      const ok = await engine.enableGyro();
+      if (ok) gyroBtn.classList.add('active');
+    }
+  });
+  $('reset').addEventListener('click', () => engine.resetView());
+  $('fullscreen').addEventListener('click', () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+    else document.exitFullscreen?.();
+  });
+
+  // Keyboard arrows
+  window.addEventListener('keydown', (e) => {
+    const step = 5;
+    if (e.key === 'ArrowLeft') engine.state.lon -= step;
+    else if (e.key === 'ArrowRight') engine.state.lon += step;
+    else if (e.key === 'ArrowUp') engine.state.lat = Math.min(85, engine.state.lat + step);
+    else if (e.key === 'ArrowDown') engine.state.lat = Math.max(-85, engine.state.lat - step);
+    else if (e.key === '+' || e.key === '=') engine.setFov(engine.state.fov - 5);
+    else if (e.key === '-') engine.setFov(engine.state.fov + 5);
+  });
+})();
+</script>
+</body>
+</html>
